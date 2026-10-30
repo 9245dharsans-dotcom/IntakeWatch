@@ -1,0 +1,16 @@
+﻿Part,What it does,Weight (kg) approx,Cost (USD) approx,Link
+Crude oil sensor (UV fluorescence),detects oil in the water,0.8,1800,https://www.aquaticsensors.com/product/crude-oil-sensor/
+ESP32 board, the brain,0.02,10,https://amzn.eu/d/0ieMK78W
+DFRobot Gravity SIM7600G Global CAT1,sends alerts and its location,0.03,60,https://www.dfrobot.com/product-2800.html   
+Solar panel 20 W        ,charges the battery,0.99,40,https://amzn.eu/d/0izIerzG
+Battery 12 V 20 Ah,powers everything,3,100,https://amzn.eu/d/0f9vv5w5
+Waterproof box,keeps electronics dry,1.5,100,https://switchesplus.com.au/300-x-200-x-150mm-Hinged-Enclosure-Grey-ABS-Base-Clear-PC-Lid~605
+Hull, floats,15,300,
+Mast + light,visibility for boats,2.5,110,
+Chain + anchor,keeps it in place,70,130,
+"4G LTE + GPS combo puck antenna, SMA male",signal for alerts and position,0.14,20,https://www.data-alliance.net
+Buck converter 12→5 V,steps the battery’s 12 V down to 5 V for the ESP32,0.02,3,
+"Misc (cable glands, wires, fuse, sensor cable)","seals cable entries, connects parts, protects against short circuits",0.5,30,
+,,,,
+,Total:,94.5,2703,
+,Buoy weight (excl. chain + anchor),24.5,,
