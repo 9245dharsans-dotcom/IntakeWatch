@@ -17,8 +17,6 @@ Conventions (see README section 4): UTC times, lat/lon in WGS84, metres, m/s.
 from __future__ import annotations
 
 import json
-import warnings
-warnings.filterwarnings("ignore", message="Converting non-nanosecond")
 import os
 
 import numpy as np
@@ -66,20 +64,37 @@ def load_slick(src):
 
 
 def release_particles(geom, n: int, rng: np.random.Generator):
-    """n random points uniformly inside geom -> (lat, lon) arrays."""
-    minx, miny, maxx, maxy = geom.bounds
+    """n random points uniformly inside geom -> (lat, lon) arrays.
+
+    Works for a MultiPolygon made of many small patches: particles are shared
+    between patches in proportion to patch area, then placed inside each patch.
+    """
+    parts = list(geom.geoms) if hasattr(geom, "geoms") else [geom]
+    parts = [p for p in parts if p.area > 0]
+    if not parts:
+        raise ValueError("Slick geometry is empty.")
+    areas = np.array([p.area for p in parts])
+    counts = rng.multinomial(n, areas / areas.sum())
     xs, ys = [], []
-    tries = 0
-    while len(xs) < n:
-        cx = rng.uniform(minx, maxx, n * 2)
-        cy = rng.uniform(miny, maxy, n * 2)
-        inside = shapely.contains_xy(geom, cx, cy)
-        xs.extend(cx[inside])
-        ys.extend(cy[inside])
-        tries += 1
-        if tries > 200:
-            raise ValueError("Could not place particles: is the slick polygon valid?")
-    return np.array(ys[:n]), np.array(xs[:n])
+    for part, c in zip(parts, counts):
+        if c == 0:
+            continue
+        minx, miny, maxx, maxy = part.bounds
+        got, tries = 0, 0
+        while got < c:
+            cx = rng.uniform(minx, maxx, max(20 * c, 200))
+            cy = rng.uniform(miny, maxy, max(20 * c, 200))
+            inside = shapely.contains_xy(part, cx, cy)
+            take = min(c - got, int(inside.sum()))
+            xs.extend(cx[inside][:take])
+            ys.extend(cy[inside][:take])
+            got += take
+            tries += 1
+            if tries > 2000:
+                raise ValueError("Could not place particles: is the slick polygon valid?")
+    xs, ys = np.array(xs), np.array(ys)
+    order = rng.permutation(len(xs))
+    return ys[order], xs[order]
 
 
 # --------------------------------------------------------------------------
@@ -88,7 +103,7 @@ def release_particles(geom, n: int, rng: np.random.Generator):
 class Currents:
     """Surface currents from a Copernicus Marine NetCDF (variables uo, vo)."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, u_var: str = "uo", v_var: str = "vo"):
         ds = xr.open_dataset(path)
         ren = {}
         for short, long in (("lat", "latitude"), ("lon", "longitude")):
@@ -99,8 +114,8 @@ class Currents:
             if d in ds.dims:
                 ds = ds.isel({d: 0})
         ds = ds.sortby(["latitude", "longitude"])
-        self.u = ds["uo"].load()
-        self.v = ds["vo"].load()
+        self.u = ds[u_var].load()
+        self.v = ds[v_var].load()
         self.tmin = pd.Timestamp(self.u["time"].values.min())
         self.tmax = pd.Timestamp(self.u["time"].values.max())
 
@@ -115,6 +130,16 @@ class Currents:
             self.u.interp(**pts, method="linear").values,
             self.v.interp(**pts, method="linear").values,
         )
+
+
+class NoWind:
+    """Zero wind. Used only for quick tests when no wind file exists yet."""
+
+    tmin = pd.Timestamp.min
+    tmax = pd.Timestamp.max
+
+    def at(self, t, lat, lon):
+        return np.zeros_like(lat), np.zeros_like(lat)
 
 
 class Wind:
@@ -196,7 +221,7 @@ def compute_arrivals(lat_h, lon_h, times, dt_s, assets: pd.DataFrame, radius_m: 
 def run_drift(
     slick_geojson,
     currents_nc: str,
-    wind_csv: str,
+    wind_csv: str | None,
     start_utc: str,
     hours: int = 72,
     n_particles: int = 1000,
@@ -208,6 +233,7 @@ def run_drift(
     dt_s: float = 3600.0,
     scenario_id: str | None = None,
     out_dir: str | None = None,
+    current_vars: tuple = ("uo", "vo"),
 ) -> dict:
     """Run one drift forecast.
 
@@ -218,6 +244,9 @@ def run_drift(
     wind_csv      : see class Wind
     start_utc     : e.g. "2026-10-19T06:30:00Z"
     hours         : forecast length
+    wind_csv      : path, or None to run on currents only (for quick tests)
+    current_vars  : ("uo","vo") = currents without tides (default);
+                    ("utotal","vtotal") = with tides + wave drift. Use ONE pair.
     windage       : fraction of 10 m wind speed applied to the oil (typ. 0.01-0.04)
     arrival_radius_m : asset counts as reached within this distance. Default 5 km
                     because coarse current grids cannot get particles closer to
@@ -237,8 +266,12 @@ def run_drift(
     end = start + pd.Timedelta(hours=hours)
 
     geom = load_slick(slick_geojson)
-    cur = Currents(currents_nc)
-    wnd = Wind(wind_csv)
+    cur = Currents(currents_nc, *current_vars)
+    if wind_csv:
+        wnd = Wind(wind_csv)
+    else:
+        print("WARNING: no wind file given, running with CURRENTS ONLY (wind = 0).")
+        wnd = NoWind()
 
     for name, f in (("currents", cur), ("wind", wnd)):
         if start < f.tmin or end > f.tmax:
