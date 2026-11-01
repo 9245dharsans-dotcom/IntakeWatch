@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 TRACKS_CSV = DATA / "processed" / "drift" / "real_notides_w0.02_tracks.csv"
 IMPACT_CSV = DATA / "processed" / "impact.csv"
+BUOYS_CSV = DATA / "assets" / "buoys.csv"
 SLICK_START = DATA / "slick_oct21.geojson"
 SLICK_CHECK = DATA / "slick_oct24.geojson"
 
@@ -45,6 +46,13 @@ def load_impact(path):
     return df.sort_values("hours_to_arrival", na_position="last")
 
 
+@st.cache_data
+def load_buoys(path):
+    if not Path(path).exists():   # app still works if the file isn't there
+        return None
+    return pd.read_csv(path)
+
+
 def status(row, hour):
     if pd.isna(row["hours_to_arrival"]):
         return "safe"
@@ -53,6 +61,7 @@ def status(row, hour):
 
 tracks, start_utc = load_tracks(TRACKS_CSV)
 impact = load_impact(IMPACT_CSV)
+buoys = load_buoys(BUOYS_CSV)
 slick_start = load_geojson(SLICK_START)
 slick_check = load_geojson(SLICK_CHECK)
 max_hour = int(tracks["hour"].max())
@@ -63,8 +72,12 @@ st.sidebar.header("Replay time")
 hour = st.sidebar.slider("Hours after satellite image", 0, max_hour, 0)
 now_utc = start_utc + pd.Timedelta(hours=hour)
 now_uae = now_utc.tz_convert("Asia/Dubai")
-st.sidebar.markdown(f"### {now_uae:%a %d %b, %H:%M} UAE")
-st.sidebar.caption(f"{now_utc:%Y-%m-%d %H:%M} UTC")
+# one element for all three, so they always refresh together
+st.sidebar.markdown(
+    f"### {now_uae:%a %d %b, %H:%M} UAE\n"
+    f"{now_utc:%a %d %b, %H:%M} UTC  \n"
+    f"**T+{hour} h** after satellite image"
+)
 st.sidebar.markdown("---")
 show_check = st.sidebar.checkbox("Show real slick on 24 Oct (validation)")
 st.sidebar.caption(
@@ -92,11 +105,22 @@ for col, (_, row) in zip(cols, impact.iterrows()):
             st.caption(f"No oil within {ARRIVAL_RADIUS_M // 1000} km in {max_hour} h")
         else:
             left = row["hours_to_arrival"] - hour
-            st.metric(row["short_name"], "OIL ARRIVED" if s == "arrived" else f"{left:.0f} h")
+            st.metric(row["short_name"], "OIL ARRIVED" if s == "arrived" else f"{left:.0f} h left")
             arr_uae = row["first_arrival_utc"].tz_convert("Asia/Dubai")
-            st.caption(f"Arrival {arr_uae:%a %d %b %H:%M} UAE · {row['fraction_particles_arrived']:.0%} of oil particles")
+            st.caption(
+                f"Arrives {arr_uae:%a %d %b %H:%M} UAE "
+                f"(T+{row['hours_to_arrival']:.0f} h after satellite image) · "
+                f"{row['fraction_particles_arrived']:.0%} of oil particles"
+            )
             st.caption(f"{row['people_at_risk'] / 1e6:.1f} M people · {row['litres_per_day_at_risk'] / 1e6:.0f} M litres/day")
-        st.caption(f"Intake position: {row['confidence']}")
+        st.caption("Intake location: approximate")
+
+# ---------- map key ----------
+st.markdown(
+    "**Map key:** red dots = forecast oil · dashed outline = satellite slick, 21 Oct · "
+    "purple = real satellite slick, 24 Oct · intake pins: 🟢 not reached, 🟠 oil on the way, 🔴 oil arrived "
+    f"(circle = {ARRIVAL_RADIUS_M // 1000} km) · ⚓ blue pins = oil-sensor buoys"
+)
 
 # ---------- map ----------
 m = folium.Map(location=[25.68, 55.6], zoom_start=10, tiles="OpenStreetMap")
@@ -127,6 +151,14 @@ for _, row in impact.iterrows():
         tooltip=row["name"],
         icon=folium.Icon(color=c, icon="tint"),
     ).add_to(m)
+
+if buoys is not None:
+    for _, b in buoys.iterrows():
+        folium.Marker(
+            [b["lat"], b["lon"]],
+            tooltip=f"Oil-sensor buoy: {b['name']}",
+            icon=folium.Icon(color="blue", icon="anchor", prefix="fa"),
+        ).add_to(m)
 
 st_folium(m, height=600, use_container_width=True, returned_objects=[])
 
