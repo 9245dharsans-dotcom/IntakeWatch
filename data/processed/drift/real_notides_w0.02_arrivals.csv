@@ -1,0 +1,5 @@
+asset_id,first_arrival_utc,hours_to_arrival,fraction_particles_arrived
+desal_umm_al_quwain_iwp,2026-10-22T16:14:30Z,38.0,0.062
+desal_ajman_al_zawra,,,0.0
+desal_rak_al_hamra,2026-10-23T02:14:30Z,48.0,0.21
+desal_sharjah_hamriyah,,,0.0
